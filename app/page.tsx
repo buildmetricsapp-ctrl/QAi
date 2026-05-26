@@ -16,9 +16,9 @@ export default function Home() {
   const [analysing, setAnalysing] = useState(false)
   const [error, setError] = useState('')
 
-  const ref1 = useRef<HTMLInputElement>(null)
-  const ref2 = useRef<HTMLInputElement>(null)
-  const ref3 = useRef<HTMLInputElement>(null)
+  const ref1 = useRef<HTMLInputElement | null>(null)
+  const ref2 = useRef<HTMLInputElement | null>(null)
+  const ref3 = useRef<HTMLInputElement | null>(null)
 
   const handleDrop = (
     e: React.DragEvent,
