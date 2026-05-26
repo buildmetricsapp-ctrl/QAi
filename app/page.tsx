@@ -90,7 +90,11 @@ export default function ResultsPage() {
 
   useEffect(() => {
     try {
-              setResult(MOCK);
+      const raw = sessionStorage.getItem('qaiResult');
+      if (raw) {
+        setResult(JSON.parse(raw));
+      } else {
+        setResult(MOCK);
       }
     } catch {
       setResult(MOCK);
