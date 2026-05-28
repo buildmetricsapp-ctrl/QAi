@@ -379,7 +379,7 @@ export default function ResultsPage() {
             <div style={styles.emptyState}>No discrepancies match the current filters.</div>
           )}
           {filtered.map((d, i) => {
-            const cfg = SEV_CONFIG[d.severity];
+            const cfg = SEV_CONFIG[d.severity as Severity] ?? SEV_CONFIG['MINOR']
             const isOpen = expanded.has(d.id);
             return (
               <div
