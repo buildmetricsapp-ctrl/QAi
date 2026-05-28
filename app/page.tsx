@@ -72,6 +72,7 @@ export default function Home() {
       const res = await fetch('/api/analyse', { method: 'POST', body: form })
       if (!res.ok) throw new Error('Analysis failed')
       const data = await res.json()
+      sessionStorage.removeItem('qai_result')
       sessionStorage.setItem('qai_result', JSON.stringify(data))
       window.location.href = '/results'
     } catch {
