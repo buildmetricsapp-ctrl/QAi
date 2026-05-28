@@ -90,7 +90,7 @@ Respond ONLY with a valid JSON object in exactly this structure — no markdown,
 }`
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }],
     })
