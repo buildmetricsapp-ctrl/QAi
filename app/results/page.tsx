@@ -91,7 +91,7 @@ export default function ResultsPage() {
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem('qaiResult');
+      const raw = sessionStorage.getItem('qai_result');
       if (raw) {
         setResult(JSON.parse(raw));
       } else {
