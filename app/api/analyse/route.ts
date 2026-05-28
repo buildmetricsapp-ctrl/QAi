@@ -14,13 +14,17 @@ export async function POST(req: NextRequest) {
 
     // Read all files as text
     const readFile = async (f: File): Promise<string> => {
-      const buf = await f.arrayBuffer()
-      try {
-        return new TextDecoder('utf-8').decode(buf)
-      } catch {
-        return `[Binary file: ${f.name} — ${f.size} bytes]`
-      }
-    }
+  const buf = await f.arrayBuffer()
+  const name = f.name.toLowerCase()
+  if (name.endsWith('.pdf')) {
+    return `[PDF file: ${f.name} — ${f.size} bytes — content not extractable as text, use filename and size as reference]`
+  }
+  try {
+    return new TextDecoder('utf-8').decode(buf)
+  } catch {
+    return `[Binary file: ${f.name} — ${f.size} bytes]`
+  }
+ }
 
     const read = async (files: File[], label: string) => {
       const results = await Promise.all(
