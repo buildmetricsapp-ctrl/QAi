@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef } from 'react'
+import Link from 'next/link'
 
 type UploadState = {
   files: File[]
@@ -74,6 +75,23 @@ export default function Home() {
   return (
     <main className="qai-main">
       <header className="qai-header">
+  <Link href="/dashboard" style={{
+    position: 'fixed',
+    top: '1.5rem',
+    right: '1.5rem',
+    background: 'transparent',
+    color: '#00ff9d',
+    border: '1px solid #00ff9d',
+    padding: '0.5rem 1.25rem',
+    borderRadius: '6px',
+    textDecoration: 'none',
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontWeight: 700,
+    fontSize: '0.8rem',
+    zIndex: 100,
+  }}>
+    Dashboard
+  </Link>
         <div className="qai-logo">
           <span className="logo-q">Q</span>
           <span className="logo-ai">Ai</span>

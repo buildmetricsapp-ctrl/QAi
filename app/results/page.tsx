@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type Severity = 'CRITICAL' | 'MAJOR' | 'MINOR';
@@ -231,9 +232,23 @@ export default function ResultsPage() {
               <span style={styles.logoSub}>Steel Detailing QA</span>
             </div>
             <div style={styles.headerActions}>
-              <button style={{ ...styles.iconBtn, ...styles.printBtn }} onClick={printReport} title="Print / Save PDF">
-                🖨 Print / PDF
-              </button>
+  <Link href="/dashboard" style={{
+    background: 'transparent',
+    color: '#00ff9d',
+    border: '1px solid #00ff9d',
+    padding: '0.5rem 1.25rem',
+    borderRadius: '6px',
+    textDecoration: 'none',
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontWeight: 700,
+    fontSize: '0.8rem',
+    marginRight: '0.5rem',
+  }}>
+    Dashboard
+  </Link>
+  <button style={{ ...styles.iconBtn, ...styles.printBtn }} onClick={printReport} title="Print / Save PDF">
+    🖨 Print / PDF
+  </button>
               <button
                 style={{ ...styles.iconBtn, ...styles.exportBtn, opacity: exporting ? 0.6 : 1 }}
                 onClick={exportCSV}

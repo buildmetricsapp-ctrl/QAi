@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -94,7 +95,60 @@ Respond ONLY with a valid JSON object in exactly this structure — no markdown,
     const clean = raw.replace(/```json|```/g, '').trim()
     const result = JSON.parse(clean)
 
+    // Save to Supabase
+    try {
+      const projectName = result.project_summary?.project_name ?? 'Unnamed Project'
+
+      const { data: project, error: projectError } = await supabase
+        .from('projects')
+        .upsert({ name: projectName }, { onConflict: 'name' })
+        .select()
+        .single()
+
+      if (projectError) throw projectError
+
+      const { data: run, error: runError } = await supabase
+        .from('runs')
+        .insert({
+          project_id: project.id,
+          revision: result.project_summary?.revision ?? null,
+          status: result.project_summary?.overall_status ?? null,
+          member_count: result.project_summary?.member_count ?? null,
+          total_weight: result.project_summary?.total_weight ?? null,
+          issue_count: result.discrepancies?.length ?? 0,
+          summary_notes: result.project_summary?.summary_note ?? null,
+        })
+        .select()
+        .single()
+
+      if (runError) throw runError
+
+      if (result.discrepancies?.length > 0) {
+        const rows = result.discrepancies.map((d: any) => ({
+          run_id: run.id,
+          severity: d.severity ?? null,
+          category: d.category ?? null,
+          member_mark: d.member_mark ?? null,
+          input1_value: d.input1_says ?? null,
+          input2_value: d.input2_says ?? null,
+          input3_value: d.input3_says ?? null,
+          recommended_action: d.recommended_action ?? null,
+        }))
+
+        const { error: discError } = await supabase
+          .from('discrepancies')
+          .insert(rows)
+
+        if (discError) throw discError
+      }
+
+    } catch (err) {
+      console.error('Supabase save error:', err)
+    }
+
+    // Return AFTER Supabase save
     return NextResponse.json(result)
+
   } catch (err) {
     console.error('QAi analysis error:', err)
     return NextResponse.json(
@@ -103,3 +157,4 @@ Respond ONLY with a valid JSON object in exactly this structure — no markdown,
     )
   }
 }
+
