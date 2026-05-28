@@ -14,17 +14,17 @@ export async function POST(req: NextRequest) {
 
     // Read all files as text
     const readFile = async (f: File): Promise<string> => {
-  const buf = await f.arrayBuffer()
-  const name = f.name.toLowerCase()
-  if (name.endsWith('.pdf')) {
-    return `[PDF file: ${f.name} — ${f.size} bytes — content not extractable as text, use filename and size as reference]`
-  }
-  try {
-    return new TextDecoder('utf-8').decode(buf)
-  } catch {
-    return `[Binary file: ${f.name} — ${f.size} bytes]`
-  }
- }
+      const buf = await f.arrayBuffer()
+      const name = f.name.toLowerCase()
+      if (name.endsWith('.pdf')) {
+        return `[PDF file: ${f.name} — ${f.size} bytes — content not extractable as text, use filename and size as reference]`
+      }
+      try {
+        return new TextDecoder('utf-8').decode(buf)
+      } catch {
+        return `[Binary file: ${f.name} — ${f.size} bytes]`
+      }
+    }
 
     const read = async (files: File[], label: string) => {
       const results = await Promise.all(
@@ -56,48 +56,51 @@ export async function POST(req: NextRequest) {
 
     const prompt = `You are QAi — an expert steel detailing quality assurance system.
 
-You have been given three inputs from a steel construction project:
+You have been given inputs from a steel construction project:
 
 INPUT 1 — PROJECT DOCUMENTS (scope sheet, specs, RFIs, codes, emails, MOM):
-${text1}
+${text1 || '[NOT PROVIDED]'}
 
 INPUT 2 — TEKLA MODEL REPORT (member data extracted from the 3D model):
-${text2}
+${text2 || '[NOT PROVIDED]'}
 
 INPUT 3 — FABRICATION OUTPUTS (shop drawings, erection drawings, NC/DSTV files):
-${text3}
+${text3 || '[NOT PROVIDED]'}
 
 Your job is to:
-1. Compare Input 1 (design intent) vs Input 2 (what was modelled) vs Input 3 (what was fabricated)
+1. Compare the provided inputs against each other
 2. List every discrepancy you find — mismatched sections, wrong grades, incorrect dimensions, bolt/weld differences, missing members, surface treatment conflicts, and any other deviations
 3. Classify each discrepancy by severity: CRITICAL (stops fabrication or is unsafe), MAJOR (significant rework needed), MINOR (note for record)
 4. Produce a grand project summary
 
-${missingInputs.length > 0 ? `NOTE: Only ${providedInputs.join(' and ')} were provided. ${missingInputs.join(', ')} was not provided. Base your analysis only on the available inputs and note this clearly in your summary_note.` : ''}
+${missingInputs.length > 0 ? `IMPORTANT: Only ${providedInputs.join(' and ')} were provided. ${missingInputs.join(', ')} was NOT provided. Base your analysis only on the available inputs and clearly state which inputs were compared in your summary_notes.` : ''}
 
 Respond ONLY with a valid JSON object in exactly this structure — no markdown, no explanation outside the JSON:
 {
   "project_summary": {
-    "total_discrepancies": 0,
-    "critical": 0,
-    "major": 0,
-    "minor": 0,
+    "project_name": "Name of the project extracted from documents",
+    "revision": "Revision number if found e.g. Rev 0",
+    "status": "PASS | REVIEW REQUIRED | FAIL",
+    "total_members": 0,
+    "total_weight": "e.g. 12.4 T",
+    "critical_count": 0,
+    "major_count": 0,
+    "minor_count": 0,
     "input1_files": [],
     "input2_files": [],
     "input3_files": [],
-    "overall_status": "PASS | REVIEW REQUIRED | FAIL",
-    "summary_note": "One paragraph plain-English summary of the overall QA result"
+    "summary_notes": "One paragraph plain-English summary of the overall QA result including which inputs were compared"
   },
   "discrepancies": [
     {
       "id": "D001",
       "severity": "CRITICAL | MAJOR | MINOR",
       "category": "Section size | Steel grade | Dimension | Bolt spec | Weld detail | Surface treatment | Missing member | Position | Other",
-      "member_mark": "e.g. B1, C3, A1/1",
+      "member_mark": "e.g. M201STR8, C1, B2",
       "description": "Plain English description of the discrepancy",
-      "input1_says": "What the project documents specify",
-      "input2_says": "What the Tekla model shows",
-      "input3_says": "What the fabrication output shows",
+      "input1_says": "What the project documents specify or N/A if not provided",
+      "input2_says": "What the Tekla model shows or N/A if not provided",
+      "input3_says": "What the fabrication output shows or N/A if not provided",
       "recommended_action": "What needs to be corrected and by whom"
     }
   ]
@@ -130,11 +133,11 @@ Respond ONLY with a valid JSON object in exactly this structure — no markdown,
         .insert({
           project_id: project.id,
           revision: result.project_summary?.revision ?? null,
-          status: result.project_summary?.overall_status ?? null,
-          member_count: result.project_summary?.member_count ?? null,
+          status: result.project_summary?.status ?? null,
+          member_count: result.project_summary?.total_members ?? null,
           total_weight: result.project_summary?.total_weight ?? null,
           issue_count: result.discrepancies?.length ?? 0,
-          summary_notes: result.project_summary?.summary_note ?? null,
+          summary_notes: result.project_summary?.summary_notes ?? null,
         })
         .select()
         .single()
@@ -175,4 +178,3 @@ Respond ONLY with a valid JSON object in exactly this structure — no markdown,
     )
   }
 }
-

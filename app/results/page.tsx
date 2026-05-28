@@ -168,9 +168,9 @@ export default function ResultsPage() {
     );
   }
 
-  const ps = result?.project_summary ?? {};
-  const stCfg = STATUS_CONFIG[ps.status];
-  const total = ps.critical_count + ps.major_count + ps.minor_count;
+  const ps = result?.project_summary ?? {} as ProjectSummary;
+const stCfg = STATUS_CONFIG[ps.status] ?? STATUS_CONFIG['REVIEW REQUIRED'];
+const total = (ps.critical_count ?? 0) + (ps.major_count ?? 0) + (ps.minor_count ?? 0);
 
   return (
     <>
