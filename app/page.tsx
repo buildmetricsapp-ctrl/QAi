@@ -77,8 +77,8 @@ export default function Home() {
       <header className="qai-header">
   <Link href="/dashboard" style={{
     position: 'fixed',
-    top: '1.5rem',
-    right: '1.5rem',
+    top: '1rem',
+    right: '4rem',
     background: 'transparent',
     color: '#00ff9d',
     border: '1px solid #00ff9d',
