@@ -98,7 +98,8 @@ export default function ResultsPage() {
         // Fall back to mock for demo
         setResult(MOCK);
       }
-    } catch {
+    } catch (e) {
+      console.error('Results parse error:', e)
       setResult(MOCK);
     }
     setLoading(false);
@@ -167,7 +168,7 @@ export default function ResultsPage() {
     );
   }
 
-  const ps = result.project_summary;
+  const ps = result?.project_summary ?? {};
   const stCfg = STATUS_CONFIG[ps.status];
   const total = ps.critical_count + ps.major_count + ps.minor_count;
 
