@@ -37,10 +37,22 @@ export async function POST(req: NextRequest) {
     }
 
     const [text1, text2, text3] = await Promise.all([
-      read(input1Files, 'INPUT-1 (Project Documents)'),
-      read(input2Files, 'INPUT-2 (Tekla Model Report)'),
-      read(input3Files, 'INPUT-3 (Fabrication Outputs)'),
+      input1Files.length > 0 ? read(input1Files, 'INPUT-1 (Project Documents)') : '',
+      input2Files.length > 0 ? read(input2Files, 'INPUT-2 (Tekla Model Report)') : '',
+      input3Files.length > 0 ? read(input3Files, 'INPUT-3 (Fabrication Outputs)') : '',
     ])
+
+    const providedInputs = [
+      input1Files.length > 0 ? 'Input 1 (Project Documents)' : null,
+      input2Files.length > 0 ? 'Input 2 (Tekla Model Report)' : null,
+      input3Files.length > 0 ? 'Input 3 (Fabrication Outputs)' : null,
+    ].filter(Boolean)
+
+    const missingInputs = [
+      input1Files.length === 0 ? 'Input 1 (Project Documents)' : null,
+      input2Files.length === 0 ? 'Input 2 (Tekla Model Report)' : null,
+      input3Files.length === 0 ? 'Input 3 (Fabrication Outputs)' : null,
+    ].filter(Boolean)
 
     const prompt = `You are QAi — an expert steel detailing quality assurance system.
 
@@ -60,6 +72,8 @@ Your job is to:
 2. List every discrepancy you find — mismatched sections, wrong grades, incorrect dimensions, bolt/weld differences, missing members, surface treatment conflicts, and any other deviations
 3. Classify each discrepancy by severity: CRITICAL (stops fabrication or is unsafe), MAJOR (significant rework needed), MINOR (note for record)
 4. Produce a grand project summary
+
+${missingInputs.length > 0 ? `NOTE: Only ${providedInputs.join(' and ')} were provided. ${missingInputs.join(', ')} was not provided. Base your analysis only on the available inputs and note this clearly in your summary_note.` : ''}
 
 Respond ONLY with a valid JSON object in exactly this structure — no markdown, no explanation outside the JSON:
 {

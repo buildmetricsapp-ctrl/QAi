@@ -47,10 +47,13 @@ export default function Home() {
     setter({ ...state, files: updated })
   }
 
-  const allReady =
-    input1.files.length > 0 &&
-    input2.files.length > 0 &&
-    input3.files.length > 0
+  const inputsWithFiles = [
+    input1.files.length > 0,
+    input2.files.length > 0,
+    input3.files.length > 0,
+  ].filter(Boolean).length
+
+  const allReady = inputsWithFiles >= 2
 
   const handleAnalyse = async () => {
     if (!allReady) return
@@ -60,6 +63,11 @@ export default function Home() {
     input1.files.forEach(f => form.append('input1', f))
     input2.files.forEach(f => form.append('input2', f))
     input3.files.forEach(f => form.append('input3', f))
+    form.append('inputSummary', JSON.stringify({
+        input1Provided: input1.files.length > 0,
+        input2Provided: input2.files.length > 0,
+        input3Provided: input3.files.length > 0,
+      }))
     try {
       const res = await fetch('/api/analyse', { method: 'POST', body: form })
       if (!res.ok) throw new Error('Analysis failed')
@@ -162,8 +170,12 @@ export default function Home() {
         </button>
         {allReady && !analysing && (
           <p className="ready-note">
-            {input1.files.length + input2.files.length + input3.files.length} files ready · QAi will compare all inputs and list every discrepancy
-          </p>
+  {inputsWithFiles === 3
+    ? `${input1.files.length + input2.files.length + input3.files.length} files ready · QAi will compare all 3 inputs`
+    : inputsWithFiles === 2
+    ? `${input1.files.length + input2.files.length + input3.files.length} files ready · QAi will compare the 2 provided inputs`
+    : ''}
+</p>
         )}
       </div>
 
