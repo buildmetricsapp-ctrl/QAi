@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import Link from 'next/link'
+import JSZip from 'jszip'
 
 type UploadState = {
   files: File[]
@@ -118,7 +119,7 @@ export default function Home() {
           label="Input 1"
           title="Project Documents"
           description="Scope sheet, design drawings, RFIs, specifications, codes, emails, MOM and other project references"
-          accept=".pdf,.doc,.docx,.txt,.eml,.msg"
+          accept=".pdf,.doc,.docx,.txt,.eml,.msg,.zip"
           state={input1}
           inputRef={ref1}
           onDrop={e => handleDrop(e, setInput1)}
@@ -131,7 +132,7 @@ export default function Home() {
           label="Input 2"
           title="Tekla Model Report"
           description="Excel or CSV exported from Tekla using the QAi report template — member data, sections, grades, coordinates"
-          accept=".xlsx,.xls,.csv"
+          accept=".xlsx,.xls,.csv, .zip"
           state={input2}
           inputRef={ref2}
           onDrop={e => handleDrop(e, setInput2)}
@@ -144,7 +145,7 @@ export default function Home() {
           label="Input 3"
           title="Fabrication Outputs"
           description="Erection drawings, shop drawings, reports, NC files, CNC files and DSTV files from the fabricator"
-          accept=".pdf,.nc,.dstv,.cnc,.txt"
+          accept=".pdf,.nc,.dstv,.cnc,.txt,.zip"
           state={input3}
           inputRef={ref3}
           onDrop={e => handleDrop(e, setInput3)}
