@@ -2,6 +2,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import JSZip from 'jszip'
+import { execSync } from 'child_process'
+import os from 'os'
+import nodePath from 'path'
+import fs from 'fs'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -11,8 +15,28 @@ const TEXT_LIMIT    = 2000
 
 // ─── PDF Text Extraction ──────────────────────────────────────────────────────
 async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
+  // Try pdftotext first — handles complex fonts better than pdf2json
+  try {
+    const tmpFile = nodePath.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
+    fs.writeFileSync(tmpFile, Buffer.from(buffer))
+    try {
+      const text = execSync(`pdftotext -l ${MAX_PDF_PAGES} "${tmpFile}" -`, {
+        timeout: 15000,
+        maxBuffer: 1024 * 1024 * 10,
+      }).toString()
+      fs.unlinkSync(tmpFile)
+      if (text && text.trim().length > 50) {
+        return text.slice(0, TEXT_LIMIT * 3)
+      }
+    } catch {
+      try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
+    }
+  } catch { /* fall through to pdf2json */ }
+
+  // Fallback to pdf2json
   return new Promise((resolve) => {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const PDFParser = require('pdf2json')
       const parser = new PDFParser()
       parser.on('pdfParser_dataReady', (data: any) => {
@@ -35,7 +59,7 @@ async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
 // ─── ZIP Entry Types ──────────────────────────────────────────────────────────
 type ZipEntry = { name: string; getData: () => Promise<ArrayBuffer> }
 
-const ALLOWED_EXTS = ['.pdf', '.nc', '.dstv', '.csv', '.txt']
+const ALLOWED_EXTS = ['.pdf', '.nc', '.dstv', '.csv', '.txt', '.xml']
 
 async function getZipEntries(buffer: ArrayBuffer): Promise<ZipEntry[]> {
   const zip = await JSZip.loadAsync(buffer)
@@ -51,8 +75,8 @@ async function getZipEntries(buffer: ArrayBuffer): Promise<ZipEntry[]> {
 }
 
 // ─── Download from Supabase Storage ──────────────────────────────────────────
-async function downloadFile(path: string): Promise<ArrayBuffer> {
-  const { data, error } = await supabase.storage.from('qai-uploads').download(path)
+async function downloadFile(filePath: string): Promise<ArrayBuffer> {
+  const { data, error } = await supabase.storage.from('qai-uploads').download(filePath)
   if (error) throw error
   return data.arrayBuffer()
 }
@@ -60,70 +84,35 @@ async function downloadFile(path: string): Promise<ArrayBuffer> {
 // ─── Get entries from storage paths ──────────────────────────────────────────
 async function getEntriesFromPaths(paths: string[]): Promise<ZipEntry[]> {
   const entries: ZipEntry[] = []
-  for (const path of paths) {
-    const name = path.split('/').pop() || path
+  for (const p of paths) {
+    const name = p.split('/').pop() || p
     if (name.toLowerCase().endsWith('.zip')) {
-      const buf = await downloadFile(path)
+      const buf = await downloadFile(p)
       entries.push(...await getZipEntries(buf))
     } else {
-      entries.push({ name, getData: () => downloadFile(path) })
+      entries.push({ name, getData: () => downloadFile(p) })
     }
   }
   return entries
 }
 
 // ─── Read entries to text ─────────────────────────────────────────────────────
-async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
-  // Try pdftotext first (handles complex fonts better than pdf2json)
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { execSync } = require('child_process') as typeof import('child_process')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require('os') as typeof import('os')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path') as typeof import('path')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-     const fs = require('fs') as typeof import('fs')
-
-    const tmpFile = path.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
-    fs.writeFileSync(tmpFile, Buffer.from(buffer))
-
-    try {
-      const text = execSync(`pdftotext -l ${MAX_PDF_PAGES} "${tmpFile}" -`, {
-        timeout: 15000,
-        maxBuffer: 1024 * 1024 * 10,
-      }).toString()
-
-      fs.unlinkSync(tmpFile)
-
-      if (text && text.trim().length > 50) {
-        return text.slice(0, TEXT_LIMIT * 3) // give pdftotext more room
-      }
-    } catch {
-      fs.unlinkSync(tmpFile)
+async function readEntriesToText(entries: ZipEntry[], label: string): Promise<string> {
+  if (entries.length === 0) return ''
+  const parts: string[] = []
+  for (const entry of entries) {
+    const buf  = await entry.getData()
+    const name = entry.name.toLowerCase()
+    let content: string
+    if (name.endsWith('.pdf')) {
+      content = `[PDF: ${entry.name}]\n${await extractPdfText(buf)}`
+    } else {
+      try { content = new TextDecoder('utf-8').decode(buf) }
+      catch { content = `[Binary file: ${entry.name}]` }
     }
-  } catch { /* fall through to pdf2json */ }
-
-  // Fallback to pdf2json
-  return new Promise((resolve) => {
-    try {
-      const PDFParser = require('pdf2json')
-      const parser = new PDFParser()
-      parser.on('pdfParser_dataReady', (data: any) => {
-        try {
-          const pages = data.Pages?.slice(0, MAX_PDF_PAGES) ?? []
-          const text = pages.map((page: any, i: number) => {
-            const pageText = (page.Texts ?? [])
-              .map((t: any) => (t.R ?? []).map((r: any) => decodeURIComponent(r.T ?? '')).join('')).filter(Boolean).join(' ')
-            return `[Page ${i + 1}]\n${pageText}`
-          }).join('\n\n')
-          resolve(text || '[PDF parsed but no text found]')
-        } catch { resolve('[PDF parse error]') }
-      })
-      parser.on('pdfParser_dataError', () => resolve('[PDF could not be parsed]'))
-      parser.parseBuffer(Buffer.from(buffer))
-    } catch { resolve('[PDF extraction unavailable]') }
-  })
+    parts.push(`--- ${label} FILE: ${entry.name} ---\n${content.slice(0, TEXT_LIMIT)}`)
+  }
+  return parts.join('\n\n')
 }
 
 // ─── Prompt Builder ───────────────────────────────────────────────────────────
@@ -225,15 +214,12 @@ export async function POST(req: NextRequest) {
   if (!jobId) return NextResponse.json({ error: 'Missing jobId' }, { status: 400 })
 
   try {
-    // Fetch job
     const { data: job, error: jobError } = await supabase
       .from('jobs').select('*').eq('id', jobId).single()
     if (jobError) throw jobError
 
-    // Mark as processing
     await supabase.from('jobs').update({ status: 'processing' }).eq('id', jobId)
 
-    // Get entries from storage
     const [entries1, entries2, entries3] = await Promise.all([
       getEntriesFromPaths(job.input1_paths ?? []),
       getEntriesFromPaths(job.input2_paths ?? []),
@@ -256,7 +242,6 @@ export async function POST(req: NextRequest) {
 
     const text2 = await readEntriesToText(entries2, 'INPUT-2 (Tekla Model Report)')
 
-    // Chunk inputs
     const chunk1s: ZipEntry[][] = []
     for (let i = 0; i < Math.max(entries1.length, 1); i += BATCH_SIZE) chunk1s.push(entries1.slice(i, i + BATCH_SIZE))
 
@@ -264,8 +249,6 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < Math.max(entries3.length, 1); i += BATCH_SIZE) chunk3s.push(entries3.slice(i, i + BATCH_SIZE))
 
     const totalBatches = Math.max(chunk1s.length, chunk3s.length)
-
-    // Update total batches
     await supabase.from('jobs').update({ total_batches: totalBatches }).eq('id', jobId)
 
     const batchResults: any[] = []
@@ -286,17 +269,14 @@ export async function POST(req: NextRequest) {
         : ''
 
       const prompt = buildPrompt(text1, text2, text3, batchInfo, providedInputs, missingInputs)
-      const result = await callClaude(prompt)
-      batchResults.push(result)
+      batchResults.push(await callClaude(prompt))
 
-      // Update progress
       await supabase.from('jobs').update({ completed_batches: i + 1 }).eq('id', jobId)
       await new Promise(r => setTimeout(r, 300))
     }
 
     const finalResult = mergeResults(batchResults)
 
-    // Save to projects/runs/discrepancies
     const projectName = finalResult.project_summary?.project_name ?? 'Unnamed Project'
     const { data: project } = await supabase
       .from('projects').upsert({ name: projectName }, { onConflict: 'name' }).select().single()
@@ -328,14 +308,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Mark job complete with result
     await supabase.from('jobs').update({
       status: 'complete',
       result: finalResult,
       project_name: projectName,
     }).eq('id', jobId)
 
-    // Clean up storage
     const allPaths = [...(job.input1_paths ?? []), ...(job.input2_paths ?? []), ...(job.input3_paths ?? [])]
     if (allPaths.length > 0) {
       await supabase.storage.from('qai-uploads').remove(allPaths)
@@ -345,10 +323,7 @@ export async function POST(req: NextRequest) {
 
   } catch (err) {
     console.error('[QAi Worker] Error:', err)
-    await supabase.from('jobs').update({
-      status: 'error',
-      error: String(err),
-    }).eq('id', jobId)
+    await supabase.from('jobs').update({ status: 'error', error: String(err) }).eq('id', jobId)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }

@@ -2,49 +2,41 @@ import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import JSZip from 'jszip'
+import { execSync } from 'child_process'
+import os from 'os'
+import nodePath from 'path'
+import fs from 'fs'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const MAX_PDF_PAGES = 5    // pages to extract per PDF
-const BATCH_SIZE    = 5    // files per Claude call (keep memory low)
-const TEXT_LIMIT    = 2000 // chars per file sent to Claude
+const MAX_PDF_PAGES = 5
+const BATCH_SIZE    = 5
+const TEXT_LIMIT    = 2000
 
 // ─── PDF Text Extraction ──────────────────────────────────────────────────────
 async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
-  // Try pdftotext first (handles complex fonts better than pdf2json)
+  // Try pdftotext first — handles complex fonts better than pdf2json
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { execSync } = require('child_process') as typeof import('child_process')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require('os') as typeof import('os')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require('path') as typeof import('path')
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const fs = require('fs') as typeof import('fs')
-
-    const tmpFile = path.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
+    const tmpFile = nodePath.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
     fs.writeFileSync(tmpFile, Buffer.from(buffer))
-
     try {
       const text = execSync(`pdftotext -l ${MAX_PDF_PAGES} "${tmpFile}" -`, {
         timeout: 15000,
         maxBuffer: 1024 * 1024 * 10,
       }).toString()
-
       fs.unlinkSync(tmpFile)
-
       if (text && text.trim().length > 50) {
-        return text.slice(0, TEXT_LIMIT * 3) // give pdftotext more room
+        return text.slice(0, TEXT_LIMIT * 3)
       }
     } catch {
-      fs.unlinkSync(tmpFile)
+      try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
     }
   } catch { /* fall through to pdf2json */ }
 
   // Fallback to pdf2json
   return new Promise((resolve) => {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const PDFParser = require('pdf2json')
       const parser = new PDFParser()
       parser.on('pdfParser_dataReady', (data: any) => {
@@ -65,32 +57,24 @@ async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
 }
 
 // ─── ZIP Entry Types ──────────────────────────────────────────────────────────
-// Lazy entry — getData() only called when we actually process this file
-// This means ZIP contents are never all in RAM at once
-
 type ZipEntry = {
   name: string
   getData: () => Promise<ArrayBuffer>
 }
 
-const ALLOWED_EXTS = ['.pdf', '.nc', '.dstv', '.csv', '.txt']
+const ALLOWED_EXTS = ['.pdf', '.nc', '.dstv', '.csv', '.txt', '.xml']
 
 async function getZipEntries(zipFile: File): Promise<ZipEntry[]> {
   const buf = await zipFile.arrayBuffer()
   const zip = await JSZip.loadAsync(buf)
   const entries: ZipEntry[] = []
-
   for (const [filename, entry] of Object.entries(zip.files)) {
     if (entry.dir) continue
     const lower = filename.toLowerCase()
     if (!ALLOWED_EXTS.some(ext => lower.endsWith(ext))) continue
     const shortName = filename.split('/').pop() || filename
-    entries.push({
-      name: shortName,
-      getData: () => entry.async('arraybuffer'),
-    })
+    entries.push({ name: shortName, getData: () => entry.async('arraybuffer') })
   }
-
   return entries
 }
 
@@ -100,53 +84,33 @@ async function getFileEntries(files: File[]): Promise<ZipEntry[]> {
     if (f.name.toLowerCase().endsWith('.zip')) {
       entries.push(...await getZipEntries(f))
     } else {
-      entries.push({
-        name: f.name,
-        getData: () => f.arrayBuffer(),
-      })
+      entries.push({ name: f.name, getData: () => f.arrayBuffer() })
     }
   }
   return entries
 }
 
 // ─── Read Entries to Text ─────────────────────────────────────────────────────
-// Reads only the given entries (a small batch) — never the whole set at once
-
 async function readEntriesToText(entries: ZipEntry[], label: string): Promise<string> {
   if (entries.length === 0) return ''
   const parts: string[] = []
-
   for (const entry of entries) {
     const buf  = await entry.getData()
     const name = entry.name.toLowerCase()
     let content: string
-
     if (name.endsWith('.pdf')) {
-      const text = await extractPdfText(buf)
-      content = `[PDF: ${entry.name}]\n${text}`
+      content = `[PDF: ${entry.name}]\n${await extractPdfText(buf)}`
     } else {
-      try {
-        content = new TextDecoder('utf-8').decode(buf)
-      } catch {
-        content = `[Binary file: ${entry.name}]`
-      }
+      try { content = new TextDecoder('utf-8').decode(buf) }
+      catch { content = `[Binary file: ${entry.name}]` }
     }
-
     parts.push(`--- ${label} FILE: ${entry.name} ---\n${content.slice(0, TEXT_LIMIT)}`)
   }
-
   return parts.join('\n\n')
 }
 
 // ─── Prompt Builder ───────────────────────────────────────────────────────────
-function buildPrompt(
-  text1: string,
-  text2: string,
-  text3: string,
-  batchInfo: string,
-  providedInputs: string[],
-  missingInputs: string[]
-): string {
+function buildPrompt(text1: string, text2: string, text3: string, batchInfo: string, providedInputs: string[], missingInputs: string[]): string {
   return `You are QAi — an expert steel detailing quality assurance system.
 
 You have been given inputs from a steel construction project:
@@ -217,34 +181,22 @@ async function callClaude(prompt: string): Promise<any> {
 // ─── Merge Batch Results ──────────────────────────────────────────────────────
 function mergeResults(results: any[]): any {
   if (results.length === 1) return results[0]
-
   const base = results[0]
   const allDiscrepancies: any[] = []
   let idCounter = 1
-
   for (const result of results) {
     for (const d of (result.discrepancies ?? [])) {
-      allDiscrepancies.push({
-        ...d,
-        id: `D${String(idCounter++).padStart(3, '0')}`,
-      })
+      allDiscrepancies.push({ ...d, id: `D${String(idCounter++).padStart(3, '0')}` })
     }
   }
-
   const critical = allDiscrepancies.filter(d => d.severity === 'CRITICAL').length
   const major    = allDiscrepancies.filter(d => d.severity === 'MAJOR').length
   const minor    = allDiscrepancies.filter(d => d.severity === 'MINOR').length
   const total    = allDiscrepancies.length
-
   let status = 'PASS'
   if (critical > 0) status = 'FAIL'
   else if (major > 0 || minor > 0) status = 'REVIEW REQUIRED'
-
-  const allNotes = results
-    .map(r => r.project_summary?.summary_notes)
-    .filter(Boolean)
-    .join(' | ')
-
+  const allNotes = results.map(r => r.project_summary?.summary_notes).filter(Boolean).join(' | ')
   return {
     project_summary: {
       ...base.project_summary,
@@ -269,7 +221,6 @@ export async function POST(req: NextRequest) {
     const raw2 = form.getAll('input2') as File[]
     const raw3 = form.getAll('input3') as File[]
 
-    // Get entries (lazy — no file data loaded yet)
     const [entries1, entries2, entries3] = await Promise.all([
       getFileEntries(raw1),
       getFileEntries(raw2),
@@ -290,10 +241,8 @@ export async function POST(req: NextRequest) {
       entries3.length === 0 ? 'Input 3 (Fabrication Outputs)' : null,
     ].filter(Boolean) as string[]
 
-    // Input 2 (Tekla report) is usually small — read once
     const text2 = await readEntriesToText(entries2, 'INPUT-2 (Tekla Model Report)')
 
-    // Chunk Input 1 and Input 3 into batches of BATCH_SIZE
     const chunk1s: ZipEntry[][] = []
     for (let i = 0; i < Math.max(entries1.length, 1); i += BATCH_SIZE) {
       chunk1s.push(entries1.slice(i, i + BATCH_SIZE))
@@ -317,7 +266,6 @@ export async function POST(req: NextRequest) {
 
       console.log(`[QAi] Batch ${i + 1}/${totalBatches} — Input1: [${c1.map(e => e.name).join(', ') || 'none'}] | Input3: [${c3.map(e => e.name).join(', ') || 'none'}]`)
 
-      // Read only this batch's files — previous batch data is GC-eligible
       const [text1, text3] = await Promise.all([
         readEntriesToText(c1, 'INPUT-1 (Project Documents)'),
         readEntriesToText(c3, 'INPUT-3 (Fabrication Outputs)'),
@@ -330,7 +278,6 @@ export async function POST(req: NextRequest) {
       const prompt = buildPrompt(text1, text2, text3, batchInfo, providedInputs, missingInputs)
       batchResults.push(await callClaude(prompt))
 
-      // Pause briefly to let GC free memory before next batch
       await new Promise(r => setTimeout(r, 300))
     }
 
