@@ -76,10 +76,14 @@ async function getEntriesFromPaths(paths: string[]): Promise<ZipEntry[]> {
 async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
   // Try pdftotext first (handles complex fonts better than pdf2json)
   try {
-    const { execSync } = require('child_process')
-    const os = require('os')
-    const path = require('path')
-    const fs = require('fs')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execSync } = require('child_process') as typeof import('child_process')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('os') as typeof import('os')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('path') as typeof import('path')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     const fs = require('fs') as typeof import('fs')
 
     const tmpFile = path.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
     fs.writeFileSync(tmpFile, Buffer.from(buffer))

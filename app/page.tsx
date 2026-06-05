@@ -149,7 +149,7 @@ export default function Home() {
         <DropZone
           label="Input 2" title="Tekla Model Report"
           description="Excel or CSV exported from Tekla using the QAi report template — member data, sections, grades, coordinates"
-          accept=".xlsx,.xls,.csv,.zip"
+          accept=".xlsx,.xls,.csv,.xml,.zip"
           state={input2} inputRef={ref2}
           onDrop={e => handleDrop(e, setInput2)}
           onRemove={i => removeFile(i, input2, setInput2)}
