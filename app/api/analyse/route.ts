@@ -12,42 +12,51 @@ const TEXT_LIMIT    = 2000 // chars per file sent to Claude
 
 // ─── PDF Text Extraction ──────────────────────────────────────────────────────
 async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
+  // Try pdftotext first (handles complex fonts better than pdf2json)
+  try {
+    const { execSync } = require('child_process')
+    const os = require('os')
+    const path = require('path')
+    const fs = require('fs')
+
+    const tmpFile = path.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
+    fs.writeFileSync(tmpFile, Buffer.from(buffer))
+
+    try {
+      const text = execSync(`pdftotext -l ${MAX_PDF_PAGES} "${tmpFile}" -`, {
+        timeout: 15000,
+        maxBuffer: 1024 * 1024 * 10,
+      }).toString()
+
+      fs.unlinkSync(tmpFile)
+
+      if (text && text.trim().length > 50) {
+        return text.slice(0, TEXT_LIMIT * 3) // give pdftotext more room
+      }
+    } catch {
+      fs.unlinkSync(tmpFile)
+    }
+  } catch { /* fall through to pdf2json */ }
+
+  // Fallback to pdf2json
   return new Promise((resolve) => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const PDFParser = require('pdf2json')
       const parser = new PDFParser()
-
       parser.on('pdfParser_dataReady', (data: any) => {
         try {
           const pages = data.Pages?.slice(0, MAX_PDF_PAGES) ?? []
           const text = pages.map((page: any, i: number) => {
             const pageText = (page.Texts ?? [])
-              .map((t: any) =>
-                (t.R ?? [])
-                  .map((r: any) => decodeURIComponent(r.T ?? ''))
-                  .join('')
-              )
-              .filter(Boolean)
-              .join(' ')
+              .map((t: any) => (t.R ?? []).map((r: any) => decodeURIComponent(r.T ?? '')).join('')).filter(Boolean).join(' ')
             return `[Page ${i + 1}]\n${pageText}`
           }).join('\n\n')
           resolve(text || '[PDF parsed but no text found]')
-        } catch {
-          resolve('[PDF parse error during text extraction]')
-        }
+        } catch { resolve('[PDF parse error]') }
       })
-
-      parser.on('pdfParser_dataError', (err: any) => {
-        console.error('[QAi] pdf2json error:', err)
-        resolve('[PDF could not be parsed]')
-      })
-
+      parser.on('pdfParser_dataError', () => resolve('[PDF could not be parsed]'))
       parser.parseBuffer(Buffer.from(buffer))
-    } catch (err) {
-      console.error('[QAi] pdf2json load error:', err)
-      resolve('[PDF extraction unavailable]')
-    }
+    } catch { resolve('[PDF extraction unavailable]') }
   })
 }
 

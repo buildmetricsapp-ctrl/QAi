@@ -73,22 +73,53 @@ async function getEntriesFromPaths(paths: string[]): Promise<ZipEntry[]> {
 }
 
 // ─── Read entries to text ─────────────────────────────────────────────────────
-async function readEntriesToText(entries: ZipEntry[], label: string): Promise<string> {
-  if (entries.length === 0) return ''
-  const parts: string[] = []
-  for (const entry of entries) {
-    const buf  = await entry.getData()
-    const name = entry.name.toLowerCase()
-    let content: string
-    if (name.endsWith('.pdf')) {
-      content = `[PDF: ${entry.name}]\n${await extractPdfText(buf)}`
-    } else {
-      try { content = new TextDecoder('utf-8').decode(buf) }
-      catch { content = `[Binary file: ${entry.name}]` }
+async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
+  // Try pdftotext first (handles complex fonts better than pdf2json)
+  try {
+    const { execSync } = require('child_process')
+    const os = require('os')
+    const path = require('path')
+    const fs = require('fs')
+
+    const tmpFile = path.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
+    fs.writeFileSync(tmpFile, Buffer.from(buffer))
+
+    try {
+      const text = execSync(`pdftotext -l ${MAX_PDF_PAGES} "${tmpFile}" -`, {
+        timeout: 15000,
+        maxBuffer: 1024 * 1024 * 10,
+      }).toString()
+
+      fs.unlinkSync(tmpFile)
+
+      if (text && text.trim().length > 50) {
+        return text.slice(0, TEXT_LIMIT * 3) // give pdftotext more room
+      }
+    } catch {
+      fs.unlinkSync(tmpFile)
     }
-    parts.push(`--- ${label} FILE: ${entry.name} ---\n${content.slice(0, TEXT_LIMIT)}`)
-  }
-  return parts.join('\n\n')
+  } catch { /* fall through to pdf2json */ }
+
+  // Fallback to pdf2json
+  return new Promise((resolve) => {
+    try {
+      const PDFParser = require('pdf2json')
+      const parser = new PDFParser()
+      parser.on('pdfParser_dataReady', (data: any) => {
+        try {
+          const pages = data.Pages?.slice(0, MAX_PDF_PAGES) ?? []
+          const text = pages.map((page: any, i: number) => {
+            const pageText = (page.Texts ?? [])
+              .map((t: any) => (t.R ?? []).map((r: any) => decodeURIComponent(r.T ?? '')).join('')).filter(Boolean).join(' ')
+            return `[Page ${i + 1}]\n${pageText}`
+          }).join('\n\n')
+          resolve(text || '[PDF parsed but no text found]')
+        } catch { resolve('[PDF parse error]') }
+      })
+      parser.on('pdfParser_dataError', () => resolve('[PDF could not be parsed]'))
+      parser.parseBuffer(Buffer.from(buffer))
+    } catch { resolve('[PDF extraction unavailable]') }
+  })
 }
 
 // ─── Prompt Builder ───────────────────────────────────────────────────────────
