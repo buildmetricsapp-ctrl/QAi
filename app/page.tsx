@@ -2,7 +2,6 @@
 
 import { useState, useRef } from 'react'
 import Link from 'next/link'
-import JSZip from 'jszip'
 
 type UploadState = {
   files: File[]
@@ -11,97 +10,119 @@ type UploadState = {
 
 const empty = (): UploadState => ({ files: [], dragging: false })
 
+type JobStatus = 'idle' | 'uploading' | 'processing' | 'done' | 'error'
+
 export default function Home() {
   const [input1, setInput1] = useState<UploadState>(empty())
   const [input2, setInput2] = useState<UploadState>(empty())
   const [input3, setInput3] = useState<UploadState>(empty())
-  const [analysing, setAnalysing] = useState(false)
+  const [jobStatus, setJobStatus] = useState<JobStatus>('idle')
+  const [progress, setProgress] = useState({ completed: 0, total: 0 })
   const [error, setError] = useState('')
+  const pollRef = useRef<NodeJS.Timeout | null>(null)
 
   const ref1 = useRef<HTMLInputElement | null>(null)
   const ref2 = useRef<HTMLInputElement | null>(null)
   const ref3 = useRef<HTMLInputElement | null>(null)
 
-  const handleDrop = (
-    e: React.DragEvent,
-    setter: React.Dispatch<React.SetStateAction<UploadState>>
-  ) => {
+  const handleDrop = (e: React.DragEvent, setter: React.Dispatch<React.SetStateAction<UploadState>>) => {
     e.preventDefault()
-    const dropped = Array.from(e.dataTransfer.files)
-    setter({ files: dropped, dragging: false })
+    setter({ files: Array.from(e.dataTransfer.files), dragging: false })
   }
 
-  const handleFiles = (
-    e: React.ChangeEvent<HTMLInputElement>,
-    setter: React.Dispatch<React.SetStateAction<UploadState>>
-  ) => {
-    const picked = Array.from(e.target.files || [])
-    setter({ files: picked, dragging: false })
+  const handleFiles = (e: React.ChangeEvent<HTMLInputElement>, setter: React.Dispatch<React.SetStateAction<UploadState>>) => {
+    setter({ files: Array.from(e.target.files || []), dragging: false })
   }
 
-  const removeFile = (
-    index: number,
-    state: UploadState,
-    setter: React.Dispatch<React.SetStateAction<UploadState>>
-  ) => {
-    const updated = state.files.filter((_, i) => i !== index)
-    setter({ ...state, files: updated })
+  const removeFile = (index: number, state: UploadState, setter: React.Dispatch<React.SetStateAction<UploadState>>) => {
+    setter({ ...state, files: state.files.filter((_, i) => i !== index) })
   }
 
-  const inputsWithFiles = [
-    input1.files.length > 0,
-    input2.files.length > 0,
-    input3.files.length > 0,
-  ].filter(Boolean).length
-
+  const inputsWithFiles = [input1.files.length > 0, input2.files.length > 0, input3.files.length > 0].filter(Boolean).length
   const allReady = inputsWithFiles >= 2
+  const analysing = jobStatus !== 'idle' && jobStatus !== 'error'
+
+  // Poll job status every 5 seconds
+  const startPolling = (jobId: string) => {
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/jobs?id=${jobId}`)
+        const job = await res.json()
+
+        if (job.total_batches > 0) {
+          setProgress({ completed: job.completed_batches ?? 0, total: job.total_batches })
+        }
+
+        if (job.status === 'complete') {
+          clearInterval(pollRef.current!)
+          sessionStorage.removeItem('qai_result')
+          sessionStorage.setItem('qai_result', JSON.stringify(job.result))
+          setJobStatus('done')
+          window.location.href = '/results'
+        } else if (job.status === 'error') {
+          clearInterval(pollRef.current!)
+          setError(job.error ?? 'Analysis failed. Please try again.')
+          setJobStatus('error')
+        }
+      } catch {
+        // Network hiccup — keep polling
+      }
+    }, 5000)
+  }
 
   const handleAnalyse = async () => {
     if (!allReady) return
-    setAnalysing(true)
+    setJobStatus('uploading')
     setError('')
+    setProgress({ completed: 0, total: 0 })
+
     const form = new FormData()
     input1.files.forEach(f => form.append('input1', f))
     input2.files.forEach(f => form.append('input2', f))
     input3.files.forEach(f => form.append('input3', f))
-    form.append('inputSummary', JSON.stringify({
-        input1Provided: input1.files.length > 0,
-        input2Provided: input2.files.length > 0,
-        input3Provided: input3.files.length > 0,
-      }))
+
     try {
-      const res = await fetch('/api/analyse', { method: 'POST', body: form })
-      if (!res.ok) throw new Error('Analysis failed')
-      const data = await res.json()
-      sessionStorage.removeItem('qai_result')
-      sessionStorage.setItem('qai_result', JSON.stringify(data))
-      window.location.href = '/results'
+      // Step 1 — Upload files and create job
+      const jobRes = await fetch('/api/jobs', { method: 'POST', body: form })
+      if (!jobRes.ok) throw new Error('Upload failed')
+      const { jobId } = await jobRes.json()
+
+      // Step 2 — Trigger worker (fire and forget)
+      setJobStatus('processing')
+      fetch('/api/worker', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId }),
+      }).catch(() => {}) // worker runs independently
+
+      // Step 3 — Start polling
+      startPolling(jobId)
+
     } catch {
       setError('Something went wrong. Please check your files and try again.')
-      setAnalysing(false)
+      setJobStatus('error')
     }
+  }
+
+  const statusMessage = () => {
+    if (jobStatus === 'uploading') return 'Uploading files…'
+    if (jobStatus === 'processing') {
+      if (progress.total === 0) return 'Starting analysis…'
+      return `Analysing — Batch ${progress.completed} of ${progress.total} complete…`
+    }
+    if (jobStatus === 'done') return 'Complete — loading results…'
+    return ''
   }
 
   return (
     <main className="qai-main">
       <header className="qai-header">
-  <Link href="/dashboard" style={{
-    position: 'fixed',
-    top: '1rem',
-    right: '4rem',
-    background: 'transparent',
-    color: '#00ff9d',
-    border: '1px solid #00ff9d',
-    padding: '0.5rem 1.25rem',
-    borderRadius: '6px',
-    textDecoration: 'none',
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontWeight: 700,
-    fontSize: '0.8rem',
-    zIndex: 100,
-  }}>
-    Dashboard
-  </Link>
+        <Link href="/dashboard" style={{
+          position: 'fixed', top: '1rem', right: '4rem',
+          background: 'transparent', color: '#00ff9d', border: '1px solid #00ff9d',
+          padding: '0.5rem 1.25rem', borderRadius: '6px', textDecoration: 'none',
+          fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: '0.8rem', zIndex: 100,
+        }}>Dashboard</Link>
         <div className="qai-logo">
           <span className="logo-q">Q</span>
           <span className="logo-ai">Ai</span>
@@ -116,43 +137,34 @@ export default function Home() {
 
       <div className="inputs-grid">
         <DropZone
-          label="Input 1"
-          title="Project Documents"
+          label="Input 1" title="Project Documents"
           description="Scope sheet, design drawings, RFIs, specifications, codes, emails, MOM and other project references"
           accept=".pdf,.doc,.docx,.txt,.eml,.msg,.zip"
-          state={input1}
-          inputRef={ref1}
+          state={input1} inputRef={ref1}
           onDrop={e => handleDrop(e, setInput1)}
           onRemove={i => removeFile(i, input1, setInput1)}
           onChange={e => handleFiles(e, setInput1)}
-          color="blue"
-          icon="📄"
+          color="blue" icon="📄"
         />
         <DropZone
-          label="Input 2"
-          title="Tekla Model Report"
+          label="Input 2" title="Tekla Model Report"
           description="Excel or CSV exported from Tekla using the QAi report template — member data, sections, grades, coordinates"
-          accept=".xlsx,.xls,.csv, .zip"
-          state={input2}
-          inputRef={ref2}
+          accept=".xlsx,.xls,.csv,.zip"
+          state={input2} inputRef={ref2}
           onDrop={e => handleDrop(e, setInput2)}
           onRemove={i => removeFile(i, input2, setInput2)}
           onChange={e => handleFiles(e, setInput2)}
-          color="teal"
-          icon="📊"
+          color="teal" icon="📊"
         />
         <DropZone
-          label="Input 3"
-          title="Fabrication Outputs"
+          label="Input 3" title="Fabrication Outputs"
           description="Erection drawings, shop drawings, reports, NC files, CNC files and DSTV files from the fabricator"
           accept=".pdf,.nc,.dstv,.cnc,.txt,.zip"
-          state={input3}
-          inputRef={ref3}
+          state={input3} inputRef={ref3}
           onDrop={e => handleDrop(e, setInput3)}
           onRemove={i => removeFile(i, input3, setInput3)}
           onChange={e => handleFiles(e, setInput3)}
-          color="purple"
-          icon="🔩"
+          color="purple" icon="🔩"
         />
       </div>
 
@@ -165,19 +177,26 @@ export default function Home() {
           disabled={!allReady || analysing}
         >
           {analysing ? (
-            <><span className="spinner" />Analysing project files…</>
+            <><span className="spinner" />{statusMessage()}</>
           ) : (
-            <>{allReady ? '⚡ Run QAi Analysis' : 'Upload all 3 inputs to continue'}</>
+            <>{allReady ? '⚡ Run QAi Analysis' : 'Upload at least 2 inputs to continue'}</>
           )}
         </button>
+
+        {/* Progress bar */}
+        {jobStatus === 'processing' && progress.total > 0 && (
+          <div className="progress-wrap">
+            <div className="progress-bar" style={{ width: `${Math.round((progress.completed / progress.total) * 100)}%` }} />
+            <span className="progress-label">{Math.round((progress.completed / progress.total) * 100)}%</span>
+          </div>
+        )}
+
         {allReady && !analysing && (
           <p className="ready-note">
-  {inputsWithFiles === 3
-    ? `${input1.files.length + input2.files.length + input3.files.length} files ready · QAi will compare all 3 inputs`
-    : inputsWithFiles === 2
-    ? `${input1.files.length + input2.files.length + input3.files.length} files ready · QAi will compare the 2 provided inputs`
-    : ''}
-</p>
+            {inputsWithFiles === 3
+              ? `${input1.files.length + input2.files.length + input3.files.length} files ready · QAi will compare all 3 inputs`
+              : `${input1.files.length + input2.files.length + input3.files.length} files ready · QAi will compare the 2 provided inputs`}
+          </p>
         )}
       </div>
 
@@ -201,6 +220,9 @@ export default function Home() {
         .run-btn.running { background:rgba(74,158,255,0.15); color:#4a9eff; border:1px solid rgba(74,158,255,0.3); cursor:wait; }
         .spinner { width:16px; height:16px; border:2px solid rgba(74,158,255,0.3); border-top-color:#4a9eff; border-radius:50%; animation:spin 0.8s linear infinite; display:inline-block; }
         @keyframes spin { to{transform:rotate(360deg);} }
+        .progress-wrap { width:100%; max-width:480px; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden; position:relative; }
+        .progress-bar { height:100%; background:linear-gradient(90deg,#4a9eff,#00ff9d); border-radius:3px; transition:width 0.5s ease; }
+        .progress-label { font-size:11px; color:rgba(255,255,255,0.35); font-family:monospace; }
         .ready-note { font-size:12px; color:rgba(255,255,255,0.35); margin:0; text-align:center; }
         .qai-error { max-width:480px; margin:16px auto 0; padding:12px 16px; background:rgba(255,80,80,0.1); border:1px solid rgba(255,80,80,0.25); border-radius:8px; color:#ff8080; font-size:13px; text-align:center; }
       `}</style>
@@ -209,17 +231,11 @@ export default function Home() {
 }
 
 type DropZoneProps = {
-  label: string
-  title: string
-  description: string
-  accept: string
-  state: UploadState
-  inputRef: React.RefObject<HTMLInputElement | null>
-  onDrop: (e: React.DragEvent) => void
-  onRemove: (i: number) => void
+  label: string; title: string; description: string; accept: string
+  state: UploadState; inputRef: React.RefObject<HTMLInputElement | null>
+  onDrop: (e: React.DragEvent) => void; onRemove: (i: number) => void
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
-  color: 'blue' | 'teal' | 'purple'
-  icon: string
+  color: 'blue' | 'teal' | 'purple'; icon: string
 }
 
 function DropZone({ label, title, description, accept, state, inputRef, onDrop, onRemove, onChange, color, icon }: DropZoneProps) {
