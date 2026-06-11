@@ -70,39 +70,59 @@ export default function Home() {
     }, 5000)
   }
 
+  const DIRECT_THRESHOLD = 40 * 1024 * 1024 // 40MB
+
   const handleAnalyse = async () => {
-    if (!allReady) return
-    setJobStatus('uploading')
-    setError('')
-    setProgress({ completed: 0, total: 0 })
+  if (!allReady) return
+  setError('')
+  setProgress({ completed: 0, total: 0 })
 
-    const form = new FormData()
-    input1.files.forEach(f => form.append('input1', f))
-    input2.files.forEach(f => form.append('input2', f))
-    input3.files.forEach(f => form.append('input3', f))
+  const totalSize =
+    [...input1.files, ...input2.files, ...input3.files]
+      .reduce((sum, f) => sum + f.size, 0)
 
+  const form = new FormData()
+  input1.files.forEach(f => form.append('input1', f))
+  input2.files.forEach(f => form.append('input2', f))
+  input3.files.forEach(f => form.append('input3', f))
+
+  if (totalSize > DIRECT_THRESHOLD) {
+    // Large files — send directly to analyse route (no Supabase Storage)
+    setJobStatus('processing')
     try {
-      // Step 1 — Upload files and create job
+      const res = await fetch('/api/analyse', { method: 'POST', body: form })
+      if (!res.ok) throw new Error('Analysis failed')
+      const data = await res.json()
+      sessionStorage.removeItem('qai_result')
+      sessionStorage.setItem('qai_result', JSON.stringify(data))
+      setJobStatus('done')
+      window.location.href = '/results'
+    } catch {
+      setError('Something went wrong. Please check your files and try again.')
+      setJobStatus('error')
+    }
+  } else {
+    // Small files — async job flow with progress polling
+    setJobStatus('uploading')
+    try {
       const jobRes = await fetch('/api/jobs', { method: 'POST', body: form })
       if (!jobRes.ok) throw new Error('Upload failed')
       const { jobId } = await jobRes.json()
 
-      // Step 2 — Trigger worker (fire and forget)
       setJobStatus('processing')
       fetch('/api/worker', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId }),
-      }).catch(() => {}) // worker runs independently
+      }).catch(() => {})
 
-      // Step 3 — Start polling
       startPolling(jobId)
-
     } catch {
       setError('Something went wrong. Please check your files and try again.')
       setJobStatus('error')
     }
   }
+ }
 
   const statusMessage = () => {
     if (jobStatus === 'uploading') return 'Uploading files…'
