@@ -16,22 +16,25 @@ const TEXT_LIMIT    = 2000
 // ─── PDF Text Extraction ──────────────────────────────────────────────────────
 async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
   // Try pdftotext first — handles complex fonts better than pdf2json
-  try {
-    const tmpFile = nodePath.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
-    fs.writeFileSync(tmpFile, Buffer.from(buffer))
+  // Skip on Railway where pdftotext is not available
+  if (!process.env.SKIP_PDFTOTEXT) {
     try {
-      const text = execSync(`pdftotext -l ${MAX_PDF_PAGES} "${tmpFile}" -`, {
-        timeout: 15000,
-        maxBuffer: 1024 * 1024 * 10,
-      }).toString()
-      fs.unlinkSync(tmpFile)
-      if (text && text.trim().length > 50) {
-        return text.slice(0, TEXT_LIMIT * 3)
+      const tmpFile = nodePath.join(os.tmpdir(), `qai_${Date.now()}.pdf`)
+      fs.writeFileSync(tmpFile, Buffer.from(buffer))
+      try {
+        const text = execSync(`pdftotext -l ${MAX_PDF_PAGES} "${tmpFile}" -`, {
+          timeout: 15000,
+          maxBuffer: 1024 * 1024 * 10,
+        }).toString()
+        fs.unlinkSync(tmpFile)
+        if (text && text.trim().length > 50) {
+          return text.slice(0, TEXT_LIMIT * 3)
+        }
+      } catch {
+        try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
       }
-    } catch {
-      try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
-    }
-  } catch { /* fall through to pdf2json */ }
+    } catch { /* fall through to pdf2json */ }
+  }
 
   // Fallback to pdf2json
   return new Promise((resolve) => {
